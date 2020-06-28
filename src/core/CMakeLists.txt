@@ -547,6 +547,8 @@ add_library(core STATIC
     hle/service/vi/vi_u.h
     hle/service/wlan/wlan.cpp
     hle/service/wlan/wlan.h
+    host_timing.cpp
+    host_timing.h
     loader/deconstructed_rom_directory.cpp
     loader/deconstructed_rom_directory.h
     loader/elf.cpp
@@ -606,11 +608,11 @@ endif()
 create_target_directory_groups(core)
 
 target_link_libraries(core PUBLIC common PRIVATE audio_core video_core)
-target_link_libraries(core PUBLIC Boost::boost PRIVATE fmt json-headers mbedtls opus unicorn)
+target_link_libraries(core PUBLIC Boost::boost PRIVATE fmt::fmt nlohmann_json::nlohmann_json mbedtls Opus::Opus unicorn zip)
 
 if (YUZU_ENABLE_BOXCAT)
     target_compile_definitions(core PRIVATE -DYUZU_ENABLE_BOXCAT)
-    target_link_libraries(core PRIVATE httplib json-headers zip)
+    target_link_libraries(core PRIVATE httplib nlohmann_json::nlohmann_json)
 endif()
 
 if (ENABLE_WEB_SERVICE)

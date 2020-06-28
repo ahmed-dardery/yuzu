@@ -19,10 +19,11 @@
 #include "common/math_util.h"
 #include "video_core/engines/const_buffer_engine_interface.h"
 #include "video_core/engines/const_buffer_info.h"
+#include "video_core/engines/engine_interface.h"
 #include "video_core/engines/engine_upload.h"
 #include "video_core/engines/shader_type.h"
 #include "video_core/gpu.h"
-#include "video_core/macro_interpreter.h"
+#include "video_core/macro/macro.h"
 #include "video_core/textures/texture.h"
 
 namespace Core {
@@ -48,7 +49,7 @@ namespace Tegra::Engines {
 #define MAXWELL3D_REG_INDEX(field_name)                                                            \
     (offsetof(Tegra::Engines::Maxwell3D::Regs, field_name) / sizeof(u32))
 
-class Maxwell3D final : public ConstBufferEngineInterface {
+class Maxwell3D final : public ConstBufferEngineInterface, public EngineInterface {
 public:
     explicit Maxwell3D(Core::System& system, VideoCore::RasterizerInterface& rasterizer,
                        MemoryManager& memory_manager);
@@ -575,6 +576,17 @@ public:
             Replay = 3,
         };
 
+        enum class ViewportSwizzle : u32 {
+            PositiveX = 0,
+            NegativeX = 1,
+            PositiveY = 2,
+            NegativeY = 3,
+            PositiveZ = 4,
+            NegativeZ = 5,
+            PositiveW = 6,
+            NegativeW = 7,
+        };
+
         struct RenderTargetConfig {
             u32 address_high;
             u32 address_low;
@@ -586,6 +598,7 @@ public:
                 BitField<4, 3, u32> block_height;
                 BitField<8, 3, u32> block_depth;
                 BitField<12, 1, InvMemoryLayout> type;
+                BitField<16, 1, u32> is_3d;
             } memory_layout;
             union {
                 BitField<0, 16, u32> layers;
@@ -618,7 +631,14 @@ public:
             f32 translate_x;
             f32 translate_y;
             f32 translate_z;
-            INSERT_UNION_PADDING_WORDS(2);
+            union {
+                u32 raw;
+                BitField<0, 3, ViewportSwizzle> x;
+                BitField<4, 3, ViewportSwizzle> y;
+                BitField<8, 3, ViewportSwizzle> z;
+                BitField<12, 3, ViewportSwizzle> w;
+            } swizzle;
+            INSERT_UNION_PADDING_WORDS(1);
 
             Common::Rectangle<f32> GetRect() const {
                 return {
@@ -1360,13 +1380,14 @@ public:
     u32 GetRegisterValue(u32 method) const;
 
     /// Write the value to the register identified by method.
-    void CallMethod(const GPU::MethodCall& method_call);
+    void CallMethod(u32 method, u32 method_argument, bool is_last_call) override;
 
     /// Write multiple values to the register identified by method.
-    void CallMultiMethod(u32 method, const u32* base_start, u32 amount, u32 methods_pending);
+    void CallMultiMethod(u32 method, const u32* base_start, u32 amount,
+                         u32 methods_pending) override;
 
     /// Write the value to the register identified by method.
-    void CallMethodFromMME(const GPU::MethodCall& method_call);
+    void CallMethodFromMME(u32 method, u32 method_argument);
 
     void FlushMMEInlineDraw();
 
@@ -1383,6 +1404,8 @@ public:
     SamplerDescriptor AccessBindlessSampler(ShaderType stage, u64 const_buffer,
                                             u64 offset) const override;
 
+    SamplerDescriptor AccessSampler(u32 handle) const override;
+
     u32 GetBoundBuffer() const override {
         return regs.tex_cb_index;
     }
@@ -1391,17 +1414,16 @@ public:
 
     const VideoCore::GuestDriverProfile& AccessGuestDriverProfile() const override;
 
-    /// Memory for macro code - it's undetermined how big this is, however 1MB is much larger than
-    /// we've seen used.
-    using MacroMemory = std::array<u32, 0x40000>;
-
-    /// Gets a reference to macro memory.
-    const MacroMemory& GetMacroMemory() const {
-        return macro_memory;
-    }
-
     bool ShouldExecute() const {
         return execute_on;
+    }
+
+    VideoCore::RasterizerInterface& GetRasterizer() {
+        return rasterizer;
+    }
+
+    const VideoCore::RasterizerInterface& GetRasterizer() const {
+        return rasterizer;
     }
 
     /// Notify a memory write has happened.
@@ -1448,16 +1470,13 @@ private:
 
     std::array<bool, Regs::NUM_REGS> mme_inline{};
 
-    /// Memory for macro code
-    MacroMemory macro_memory;
-
     /// Macro method that is currently being executed / being fed parameters.
     u32 executing_macro = 0;
     /// Parameters that have been submitted to the macro call so far.
     std::vector<u32> macro_params;
 
     /// Interpreter for the macro codes uploaded to the GPU.
-    MacroInterpreter macro_interpreter;
+    std::unique_ptr<MacroEngine> macro_engine;
 
     static constexpr u32 null_cb_data = 0xFFFFFFFF;
     struct {
@@ -1486,7 +1505,7 @@ private:
      * @param num_parameters Number of arguments
      * @param parameters Arguments to the method call
      */
-    void CallMacroMethod(u32 method, std::size_t num_parameters, const u32* parameters);
+    void CallMacroMethod(u32 method, const std::vector<u32>& parameters);
 
     /// Handles writes to the macro uploading register.
     void ProcessMacroUpload(u32 data);

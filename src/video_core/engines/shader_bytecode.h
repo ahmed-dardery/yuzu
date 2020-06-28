@@ -168,18 +168,22 @@ enum class Pred : u64 {
 };
 
 enum class PredCondition : u64 {
-    LessThan = 1,
-    Equal = 2,
-    LessEqual = 3,
-    GreaterThan = 4,
-    NotEqual = 5,
-    GreaterEqual = 6,
-    LessThanWithNan = 9,
-    LessEqualWithNan = 11,
-    GreaterThanWithNan = 12,
-    NotEqualWithNan = 13,
-    GreaterEqualWithNan = 14,
-    // TODO(Subv): Other condition types
+    F = 0,    // Always false
+    LT = 1,   // Ordered less than
+    EQ = 2,   // Ordered equal
+    LE = 3,   // Ordered less than or equal
+    GT = 4,   // Ordered greater than
+    NE = 5,   // Ordered not equal
+    GE = 6,   // Ordered greater than or equal
+    NUM = 7,  // Ordered
+    NAN_ = 8, // Unordered
+    LTU = 9,  // Unordered less than
+    EQU = 10, // Unordered equal
+    LEU = 11, // Unordered less than or equal
+    GTU = 12, // Unordered greater than
+    NEU = 13, // Unordered not equal
+    GEU = 14, // Unordered greater than or equal
+    T = 15,   // Always true
 };
 
 enum class PredOperation : u64 {
@@ -656,6 +660,10 @@ union Instruction {
 
     constexpr Instruction(u64 value) : value{value} {}
     constexpr Instruction(const Instruction& instr) : value(instr.value) {}
+
+    constexpr bool Bit(u64 offset) const {
+        return ((value >> offset) & 1) != 0;
+    }
 
     BitField<0, 8, Register> gpr0;
     BitField<8, 8, Register> gpr8;
@@ -1870,7 +1878,9 @@ public:
         HSETP2_C,
         HSETP2_R,
         HSETP2_IMM,
+        HSET2_C,
         HSET2_R,
+        HSET2_IMM,
         POPC_C,
         POPC_R,
         POPC_IMM,
@@ -2190,7 +2200,9 @@ private:
             INST("0111111-1-------", Id::HSETP2_C, Type::HalfSetPredicate, "HSETP2_C"),
             INST("0101110100100---", Id::HSETP2_R, Type::HalfSetPredicate, "HSETP2_R"),
             INST("0111111-0-------", Id::HSETP2_IMM, Type::HalfSetPredicate, "HSETP2_IMM"),
+            INST("0111110-1-------", Id::HSET2_C, Type::HalfSet, "HSET2_C"),
             INST("0101110100011---", Id::HSET2_R, Type::HalfSet, "HSET2_R"),
+            INST("0111110-0-------", Id::HSET2_IMM, Type::HalfSet, "HSET2_IMM"),
             INST("010110111010----", Id::FCMP_RR, Type::Arithmetic, "FCMP_RR"),
             INST("010010111010----", Id::FCMP_RC, Type::Arithmetic, "FCMP_RC"),
             INST("0101000010000---", Id::MUFU, Type::Arithmetic, "MUFU"),

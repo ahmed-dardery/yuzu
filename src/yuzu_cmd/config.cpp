@@ -367,6 +367,9 @@ void Config::ReadValues() {
         Settings::values.custom_rtc = std::nullopt;
     }
 
+    Settings::values.language_index = sdl2_config->GetInteger("System", "language_index", 1);
+    Settings::values.time_zone_index = sdl2_config->GetInteger("System", "time_zone_index", 0);
+
     // Core
     Settings::values.use_multi_core = sdl2_config->GetBoolean("Core", "use_multi_core", false);
 
@@ -377,8 +380,6 @@ void Config::ReadValues() {
     Settings::values.renderer_debug = sdl2_config->GetBoolean("Renderer", "debug", false);
     Settings::values.vulkan_device = sdl2_config->GetInteger("Renderer", "vulkan_device", 0);
 
-    Settings::values.resolution_factor =
-        static_cast<float>(sdl2_config->GetReal("Renderer", "resolution_factor", 1.0));
     Settings::values.aspect_ratio =
         static_cast<int>(sdl2_config->GetInteger("Renderer", "aspect_ratio", 0));
     Settings::values.max_anisotropy =
@@ -394,6 +395,8 @@ void Config::ReadValues() {
         sdl2_config->GetBoolean("Renderer", "use_asynchronous_gpu_emulation", false);
     Settings::values.use_vsync =
         static_cast<u16>(sdl2_config->GetInteger("Renderer", "use_vsync", 1));
+    Settings::values.use_assembly_shaders =
+        sdl2_config->GetBoolean("Renderer", "use_assembly_shaders", false);
     Settings::values.use_fast_gpu_time =
         sdl2_config->GetBoolean("Renderer", "use_fast_gpu_time", true);
 
@@ -408,8 +411,6 @@ void Config::ReadValues() {
         sdl2_config->GetBoolean("Audio", "enable_audio_stretching", true);
     Settings::values.audio_device_id = sdl2_config->Get("Audio", "output_device", "auto");
     Settings::values.volume = static_cast<float>(sdl2_config->GetReal("Audio", "volume", 1));
-
-    Settings::values.language_index = sdl2_config->GetInteger("System", "language_index", 1);
 
     // Miscellaneous
     Settings::values.log_filter = sdl2_config->Get("Miscellaneous", "log_filter", "*:Trace");
@@ -429,6 +430,8 @@ void Config::ReadValues() {
     Settings::values.quest_flag = sdl2_config->GetBoolean("Debugging", "quest_flag", false);
     Settings::values.disable_cpu_opt =
         sdl2_config->GetBoolean("Debugging", "disable_cpu_opt", false);
+    Settings::values.disable_macro_jit =
+        sdl2_config->GetBoolean("Debugging", "disable_macro_jit", false);
 
     const auto title_list = sdl2_config->Get("AddOns", "title_ids", "");
     std::stringstream ss(title_list);

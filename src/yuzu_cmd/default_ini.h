@@ -117,11 +117,6 @@ use_hw_renderer =
 # 0: Interpreter (slow), 1 (default): JIT (fast)
 use_shader_jit =
 
-# Resolution scale factor
-# 0: Auto (scales resolution to window size), 1: Native Switch screen resolution, Otherwise a scale
-# factor for the Switch resolution
-resolution_factor =
-
 # Aspect ratio
 # 0: Default (16:9), 1: Force 4:3, 2: Force 21:9, 3: Stretch to Window
 aspect_ratio =
@@ -133,6 +128,10 @@ max_anisotropy =
 # Whether to enable V-Sync (caps the framerate at 60FPS) or not.
 # 0 (default): Off, 1: On
 use_vsync =
+
+# Whether to use OpenGL assembly shaders or not. NV_gpu_program5 is required.
+# 0 (default): Off, 1: On
+use_assembly_shaders =
 
 # Turns on the frame limiter, which will limit frames output to the target game speed
 # 0: Off, 1: On (default)
@@ -262,6 +261,10 @@ language_index =
 # -1: Auto-select (default), 0: Japan, 1: USA, 2: Europe, 3: Australia, 4: China, 5: Korea, 6: Taiwan
 region_value =
 
+# The system time zone that yuzu will use during emulation
+# 0: Auto-select (default), 1: Default (system archive value), Others: Index for specified time zone
+time_zone_index =
+
 [Miscellaneous]
 # A filter which removes logs below a certain logging level.
 # Examples: *:Debug Kernel.SVC:Trace Service.*:Critical
@@ -283,6 +286,8 @@ quest_flag =
 # Determines whether or not JIT CPU optimizations are enabled
 # false: Optimizations Enabled, true: Optimizations Disabled
 disable_cpu_opt =
+# Enables/Disables the macro JIT compiler
+disable_macro_jit=false
 
 [WebService]
 # Whether or not to enable telemetry

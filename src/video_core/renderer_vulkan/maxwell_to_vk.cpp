@@ -21,29 +21,29 @@ namespace Sampler {
 
 VkFilter Filter(Tegra::Texture::TextureFilter filter) {
     switch (filter) {
-    case Tegra::Texture::TextureFilter::Linear:
-        return VK_FILTER_LINEAR;
     case Tegra::Texture::TextureFilter::Nearest:
         return VK_FILTER_NEAREST;
+    case Tegra::Texture::TextureFilter::Linear:
+        return VK_FILTER_LINEAR;
     }
-    UNIMPLEMENTED_MSG("Unimplemented sampler filter={}", static_cast<u32>(filter));
+    UNREACHABLE_MSG("Invalid sampler filter={}", static_cast<u32>(filter));
     return {};
 }
 
 VkSamplerMipmapMode MipmapMode(Tegra::Texture::TextureMipmapFilter mipmap_filter) {
     switch (mipmap_filter) {
     case Tegra::Texture::TextureMipmapFilter::None:
-        // TODO(Rodrigo): None seems to be mapped to OpenGL's mag and min filters without mipmapping
-        // (e.g. GL_NEAREST and GL_LINEAR). Vulkan doesn't have such a thing, find out if we have to
-        // use an image view with a single mipmap level to emulate this.
-        return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        ;
-    case Tegra::Texture::TextureMipmapFilter::Linear:
-        return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        // There are no Vulkan filter modes that directly correspond to OpenGL minification filters
+        // of GL_LINEAR or GL_NEAREST, but they can be emulated using
+        // VK_SAMPLER_MIPMAP_MODE_NEAREST, minLod = 0, and maxLod = 0.25, and using minFilter =
+        // VK_FILTER_LINEAR or minFilter = VK_FILTER_NEAREST, respectively.
+        return VK_SAMPLER_MIPMAP_MODE_NEAREST;
     case Tegra::Texture::TextureMipmapFilter::Nearest:
         return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    case Tegra::Texture::TextureMipmapFilter::Linear:
+        return VK_SAMPLER_MIPMAP_MODE_LINEAR;
     }
-    UNIMPLEMENTED_MSG("Unimplemented sampler mipmap mode={}", static_cast<u32>(mipmap_filter));
+    UNREACHABLE_MSG("Invalid sampler mipmap mode={}", static_cast<u32>(mipmap_filter));
     return {};
 }
 
@@ -78,10 +78,9 @@ VkSamplerAddressMode WrapMode(const VKDevice& device, Tegra::Texture::WrapMode w
     case Tegra::Texture::WrapMode::MirrorOnceBorder:
         UNIMPLEMENTED();
         return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
-    default:
-        UNIMPLEMENTED_MSG("Unimplemented wrap mode={}", static_cast<u32>(wrap_mode));
-        return {};
     }
+    UNIMPLEMENTED_MSG("Unimplemented wrap mode={}", static_cast<u32>(wrap_mode));
+    return {};
 }
 
 VkCompareOp DepthCompareFunction(Tegra::Texture::DepthCompareFunc depth_compare_func) {
@@ -142,14 +141,14 @@ struct FormatTuple {
     {VK_FORMAT_BC6H_UFLOAT_BLOCK},                              // BC6H_UF16
     {VK_FORMAT_BC6H_SFLOAT_BLOCK},                              // BC6H_SF16
     {VK_FORMAT_ASTC_4x4_UNORM_BLOCK},                           // ASTC_2D_4X4
-    {VK_FORMAT_B8G8R8A8_UNORM},                                 // BGRA8
+    {VK_FORMAT_B8G8R8A8_UNORM, Attachable},                     // BGRA8
     {VK_FORMAT_R32G32B32A32_SFLOAT, Attachable | Storage},      // RGBA32F
     {VK_FORMAT_R32G32_SFLOAT, Attachable | Storage},            // RG32F
     {VK_FORMAT_R32_SFLOAT, Attachable | Storage},               // R32F
     {VK_FORMAT_R16_SFLOAT, Attachable | Storage},               // R16F
     {VK_FORMAT_R16_UNORM, Attachable | Storage},                // R16U
     {VK_FORMAT_UNDEFINED},                                      // R16S
-    {VK_FORMAT_UNDEFINED},                                      // R16UI
+    {VK_FORMAT_R16_UINT, Attachable | Storage},                 // R16UI
     {VK_FORMAT_UNDEFINED},                                      // R16I
     {VK_FORMAT_R16G16_UNORM, Attachable | Storage},             // RG16
     {VK_FORMAT_R16G16_SFLOAT, Attachable | Storage},            // RG16F
@@ -160,6 +159,7 @@ struct FormatTuple {
     {VK_FORMAT_R8G8B8A8_SRGB, Attachable},                      // RGBA8_SRGB
     {VK_FORMAT_R8G8_UNORM, Attachable | Storage},               // RG8U
     {VK_FORMAT_R8G8_SNORM, Attachable | Storage},               // RG8S
+    {VK_FORMAT_R8G8_UINT, Attachable | Storage},                // RG8UI
     {VK_FORMAT_R32G32_UINT, Attachable | Storage},              // RG32UI
     {VK_FORMAT_UNDEFINED},                                      // RGBX16F
     {VK_FORMAT_R32_UINT, Attachable | Storage},                 // R32UI
@@ -167,7 +167,7 @@ struct FormatTuple {
     {VK_FORMAT_ASTC_8x8_UNORM_BLOCK},                           // ASTC_2D_8X8
     {VK_FORMAT_UNDEFINED},                                      // ASTC_2D_8X5
     {VK_FORMAT_UNDEFINED},                                      // ASTC_2D_5X4
-    {VK_FORMAT_UNDEFINED},                                      // BGRA8_SRGB
+    {VK_FORMAT_B8G8R8A8_SRGB, Attachable},                      // BGRA8_SRGB
     {VK_FORMAT_BC1_RGBA_SRGB_BLOCK},                            // DXT1_SRGB
     {VK_FORMAT_BC2_SRGB_BLOCK},                                 // DXT23_SRGB
     {VK_FORMAT_BC3_SRGB_BLOCK},                                 // DXT45_SRGB
@@ -287,10 +287,9 @@ VkPrimitiveTopology PrimitiveTopology([[maybe_unused]] const VKDevice& device,
         return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     case Maxwell::PrimitiveTopology::Patches:
         return VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
-    default:
-        UNIMPLEMENTED_MSG("Unimplemented topology={}", static_cast<u32>(topology));
-        return {};
     }
+    UNIMPLEMENTED_MSG("Unimplemented topology={}", static_cast<u32>(topology));
+    return {};
 }
 
 VkFormat VertexFormat(Maxwell::VertexAttribute::Type type, Maxwell::VertexAttribute::Size size) {
@@ -345,8 +344,6 @@ VkFormat VertexFormat(Maxwell::VertexAttribute::Type type, Maxwell::VertexAttrib
         break;
     case Maxwell::VertexAttribute::Type::SignedInt:
         switch (size) {
-        case Maxwell::VertexAttribute::Size::Size_16_16_16_16:
-            return VK_FORMAT_R16G16B16A16_SINT;
         case Maxwell::VertexAttribute::Size::Size_8:
             return VK_FORMAT_R8_SINT;
         case Maxwell::VertexAttribute::Size::Size_8_8:
@@ -355,8 +352,22 @@ VkFormat VertexFormat(Maxwell::VertexAttribute::Type type, Maxwell::VertexAttrib
             return VK_FORMAT_R8G8B8_SINT;
         case Maxwell::VertexAttribute::Size::Size_8_8_8_8:
             return VK_FORMAT_R8G8B8A8_SINT;
+        case Maxwell::VertexAttribute::Size::Size_16:
+            return VK_FORMAT_R16_SINT;
+        case Maxwell::VertexAttribute::Size::Size_16_16:
+            return VK_FORMAT_R16G16_SINT;
+        case Maxwell::VertexAttribute::Size::Size_16_16_16:
+            return VK_FORMAT_R16G16B16_SINT;
+        case Maxwell::VertexAttribute::Size::Size_16_16_16_16:
+            return VK_FORMAT_R16G16B16A16_SINT;
         case Maxwell::VertexAttribute::Size::Size_32:
             return VK_FORMAT_R32_SINT;
+        case Maxwell::VertexAttribute::Size::Size_32_32:
+            return VK_FORMAT_R32G32_SINT;
+        case Maxwell::VertexAttribute::Size::Size_32_32_32:
+            return VK_FORMAT_R32G32B32_SINT;
+        case Maxwell::VertexAttribute::Size::Size_32_32_32_32:
+            return VK_FORMAT_R32G32B32A32_SINT;
         default:
             break;
         }
@@ -669,6 +680,29 @@ VkComponentSwizzle SwizzleSource(Tegra::Texture::SwizzleSource swizzle) {
         return VK_COMPONENT_SWIZZLE_ONE;
     }
     UNIMPLEMENTED_MSG("Unimplemented swizzle source={}", static_cast<u32>(swizzle));
+    return {};
+}
+
+VkViewportCoordinateSwizzleNV ViewportSwizzle(Maxwell::ViewportSwizzle swizzle) {
+    switch (swizzle) {
+    case Maxwell::ViewportSwizzle::PositiveX:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_POSITIVE_X_NV;
+    case Maxwell::ViewportSwizzle::NegativeX:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_NEGATIVE_X_NV;
+    case Maxwell::ViewportSwizzle::PositiveY:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_POSITIVE_Y_NV;
+    case Maxwell::ViewportSwizzle::NegativeY:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_NEGATIVE_Y_NV;
+    case Maxwell::ViewportSwizzle::PositiveZ:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_POSITIVE_Z_NV;
+    case Maxwell::ViewportSwizzle::NegativeZ:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_NEGATIVE_Z_NV;
+    case Maxwell::ViewportSwizzle::PositiveW:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_POSITIVE_W_NV;
+    case Maxwell::ViewportSwizzle::NegativeW:
+        return VK_VIEWPORT_COORDINATE_SWIZZLE_NEGATIVE_W_NV;
+    }
+    UNREACHABLE_MSG("Invalid swizzle={}", static_cast<int>(swizzle));
     return {};
 }
 

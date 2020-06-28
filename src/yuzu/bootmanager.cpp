@@ -8,12 +8,15 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMessageBox>
-#include <QOffscreenSurface>
-#include <QOpenGLContext>
 #include <QPainter>
 #include <QScreen>
 #include <QStringList>
 #include <QWindow>
+
+#ifdef HAS_OPENGL
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#endif
 
 #if !defined(WIN32) && HAS_VULKAN
 #include <qpa/qplatformnativeinterface.h>
@@ -98,6 +101,7 @@ void EmuThread::run() {
 #endif
 }
 
+#ifdef HAS_OPENGL
 class OpenGLSharedContext : public Core::Frontend::GraphicsContext {
 public:
     /// Create the original context that should be shared from
@@ -106,6 +110,9 @@ public:
         format.setVersion(4, 3);
         format.setProfile(QSurfaceFormat::CompatibilityProfile);
         format.setOption(QSurfaceFormat::FormatOption::DeprecatedFunctions);
+        if (Settings::values.renderer_debug) {
+            format.setOption(QSurfaceFormat::FormatOption::DebugContext);
+        }
         // TODO: expose a setting for buffer value (ie default/single/double/triple)
         format.setSwapBehavior(QSurfaceFormat::DefaultSwapBehavior);
         format.setSwapInterval(0);
@@ -150,18 +157,19 @@ public:
     }
 
     void MakeCurrent() override {
-        if (is_current) {
-            return;
+        // We can't track the current state of the underlying context in this wrapper class because
+        // Qt may make the underlying context not current for one reason or another. In particular,
+        // the WebBrowser uses GL, so it seems to conflict if we aren't careful.
+        // Instead of always just making the context current (which does not have any caching to
+        // check if the underlying context is already current) we can check for the current context
+        // in the thread local data by calling `currentContext()` and checking if its ours.
+        if (QOpenGLContext::currentContext() != context.get()) {
+            context->makeCurrent(surface);
         }
-        is_current = context->makeCurrent(surface);
     }
 
     void DoneCurrent() override {
-        if (!is_current) {
-            return;
-        }
         context->doneCurrent();
-        is_current = false;
     }
 
     QOpenGLContext* GetShareContext() {
@@ -178,8 +186,8 @@ private:
     std::unique_ptr<QOpenGLContext> context;
     std::unique_ptr<QOffscreenSurface> offscreen_surface{};
     QSurface* surface;
-    bool is_current = false;
 };
+#endif
 
 class DummyContext : public Core::Frontend::GraphicsContext {};
 
@@ -352,7 +360,7 @@ QByteArray GRenderWindow::saveGeometry() {
 }
 
 qreal GRenderWindow::windowPixelRatio() const {
-    return devicePixelRatio();
+    return devicePixelRatioF();
 }
 
 std::pair<u32, u32> GRenderWindow::ScaleTouch(const QPointF& pos) const {
@@ -470,6 +478,7 @@ void GRenderWindow::resizeEvent(QResizeEvent* event) {
 }
 
 std::unique_ptr<Core::Frontend::GraphicsContext> GRenderWindow::CreateSharedContext() const {
+#ifdef HAS_OPENGL
     if (Settings::values.renderer_backend == Settings::RendererBackend::OpenGL) {
         auto c = static_cast<OpenGLSharedContext*>(main_context.get());
         // Bind the shared contexts to the main surface in case the backend wants to take over
@@ -477,6 +486,7 @@ std::unique_ptr<Core::Frontend::GraphicsContext> GRenderWindow::CreateSharedCont
         return std::make_unique<OpenGLSharedContext>(c->GetShareContext(),
                                                      child_widget->windowHandle());
     }
+#endif
     return std::make_unique<DummyContext>();
 }
 
@@ -557,6 +567,7 @@ void GRenderWindow::OnMinimalClientAreaChangeRequest(std::pair<u32, u32> minimal
 }
 
 bool GRenderWindow::InitializeOpenGL() {
+#ifdef HAS_OPENGL
     // TODO: One of these flags might be interesting: WA_OpaquePaintEvent, WA_NoBackground,
     // WA_DontShowOnScreen, WA_DeleteOnClose
     auto child = new OpenGLRenderWidget(this);
@@ -568,6 +579,11 @@ bool GRenderWindow::InitializeOpenGL() {
         std::make_unique<OpenGLSharedContext>(context->GetShareContext(), child->windowHandle()));
 
     return true;
+#else
+    QMessageBox::warning(this, tr("OpenGL not available!"),
+                         tr("yuzu has not been compiled with OpenGL support."));
+    return false;
+#endif
 }
 
 bool GRenderWindow::InitializeVulkan() {

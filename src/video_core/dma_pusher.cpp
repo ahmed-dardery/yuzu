@@ -27,6 +27,8 @@ void DmaPusher::DispatchCalls() {
 
     dma_pushbuffer_subindex = 0;
 
+    dma_state.is_last_call = true;
+
     while (system.IsPoweredOn()) {
         if (!Step()) {
             break;
@@ -52,9 +54,7 @@ bool DmaPusher::Step() {
         return true;
     });
     const CommandListHeader command_list_header{command_list[dma_pushbuffer_subindex++]};
-    GPUVAddr dma_get = command_list_header.addr;
-    GPUVAddr dma_put = dma_get + command_list_header.size * sizeof(u32);
-    bool non_main = command_list_header.is_non_main;
+    const GPUVAddr dma_get = command_list_header.addr;
 
     if (dma_pushbuffer_subindex >= command_list.size()) {
         // We've gone through the current list, remove it from the queue
@@ -82,9 +82,11 @@ bool DmaPusher::Step() {
                     index);
                 CallMultiMethod(&command_header.argument, max_write);
                 dma_state.method_count -= max_write;
+                dma_state.is_last_call = true;
                 index += max_write;
                 continue;
             } else {
+                dma_state.is_last_call = dma_state.method_count <= 1;
                 CallMethod(command_header.argument);
             }
 
@@ -129,11 +131,6 @@ bool DmaPusher::Step() {
         index++;
     }
 
-    if (!non_main) {
-        // TODO (degasus): This is dead code, as dma_mget is never read.
-        dma_mget = dma_put;
-    }
-
     return true;
 }
 
@@ -144,12 +141,22 @@ void DmaPusher::SetState(const CommandHeader& command_header) {
 }
 
 void DmaPusher::CallMethod(u32 argument) const {
-    gpu.CallMethod({dma_state.method, argument, dma_state.subchannel, dma_state.method_count});
+    if (dma_state.method < non_puller_methods) {
+        gpu.CallMethod({dma_state.method, argument, dma_state.subchannel, dma_state.method_count});
+    } else {
+        subchannels[dma_state.subchannel]->CallMethod(dma_state.method, argument,
+                                                      dma_state.is_last_call);
+    }
 }
 
 void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) const {
-    gpu.CallMultiMethod(dma_state.method, dma_state.subchannel, base_start, num_methods,
-                        dma_state.method_count);
+    if (dma_state.method < non_puller_methods) {
+        gpu.CallMultiMethod(dma_state.method, dma_state.subchannel, base_start, num_methods,
+                            dma_state.method_count);
+    } else {
+        subchannels[dma_state.subchannel]->CallMultiMethod(dma_state.method, base_start,
+                                                           num_methods, dma_state.method_count);
+    }
 }
 
 } // namespace Tegra

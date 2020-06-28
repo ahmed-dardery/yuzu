@@ -25,9 +25,8 @@ constexpr u32 MacroRegistersStart = 0xE00;
 Maxwell3D::Maxwell3D(Core::System& system, VideoCore::RasterizerInterface& rasterizer,
                      MemoryManager& memory_manager)
     : system{system}, rasterizer{rasterizer}, memory_manager{memory_manager},
-      macro_interpreter{*this}, upload_state{memory_manager, regs.upload} {
+      macro_engine{GetMacroEngine(*this)}, upload_state{memory_manager, regs.upload} {
     dirty.flags.flip();
-
     InitializeRegisterDefaults();
 }
 
@@ -43,6 +42,12 @@ void Maxwell3D::InitializeRegisterDefaults() {
     for (auto& viewport : regs.viewports) {
         viewport.depth_range_near = 0.0f;
         viewport.depth_range_far = 1.0f;
+    }
+    for (auto& viewport : regs.viewport_transform) {
+        viewport.swizzle.x.Assign(Regs::ViewportSwizzle::PositiveX);
+        viewport.swizzle.y.Assign(Regs::ViewportSwizzle::PositiveY);
+        viewport.swizzle.z.Assign(Regs::ViewportSwizzle::PositiveZ);
+        viewport.swizzle.w.Assign(Regs::ViewportSwizzle::PositiveW);
     }
 
     // Doom and Bomberman seems to use the uninitialized registers and just enable blend
@@ -100,7 +105,11 @@ void Maxwell3D::InitializeRegisterDefaults() {
     regs.rasterize_enable = 1;
     regs.rt_separate_frag_data = 1;
     regs.framebuffer_srgb = 1;
+    regs.line_width_aliased = 1.0f;
+    regs.line_width_smooth = 1.0f;
     regs.front_face = Maxwell3D::Regs::FrontFace::ClockWise;
+    regs.polygon_mode_back = Maxwell3D::Regs::PolygonMode::Fill;
+    regs.polygon_mode_front = Maxwell3D::Regs::PolygonMode::Fill;
 
     shadow_state = regs;
 
@@ -110,7 +119,7 @@ void Maxwell3D::InitializeRegisterDefaults() {
     mme_inline[MAXWELL3D_REG_INDEX(index_array.count)] = true;
 }
 
-void Maxwell3D::CallMacroMethod(u32 method, std::size_t num_parameters, const u32* parameters) {
+void Maxwell3D::CallMacroMethod(u32 method, const std::vector<u32>& parameters) {
     // Reset the current macro.
     executing_macro = 0;
 
@@ -119,18 +128,16 @@ void Maxwell3D::CallMacroMethod(u32 method, std::size_t num_parameters, const u3
         ((method - MacroRegistersStart) >> 1) % static_cast<u32>(macro_positions.size());
 
     // Execute the current macro.
-    macro_interpreter.Execute(macro_positions[entry], num_parameters, parameters);
+    macro_engine->Execute(*this, macro_positions[entry], parameters);
     if (mme_draw.current_mode != MMEDrawMode::Undefined) {
         FlushMMEInlineDraw();
     }
 }
 
-void Maxwell3D::CallMethod(const GPU::MethodCall& method_call) {
-    const u32 method = method_call.method;
-
+void Maxwell3D::CallMethod(u32 method, u32 method_argument, bool is_last_call) {
     if (method == cb_data_state.current) {
-        regs.reg_array[method] = method_call.argument;
-        ProcessCBData(method_call.argument);
+        regs.reg_array[method] = method_argument;
+        ProcessCBData(method_argument);
         return;
     } else if (cb_data_state.current != null_cb_data) {
         FinishCBData();
@@ -153,11 +160,11 @@ void Maxwell3D::CallMethod(const GPU::MethodCall& method_call) {
             executing_macro = method;
         }
 
-        macro_params.push_back(method_call.argument);
+        macro_params.push_back(method_argument);
 
         // Call the macro when there are no more parameters in the command buffer
-        if (method_call.IsLastCall()) {
-            CallMacroMethod(executing_macro, macro_params.size(), macro_params.data());
+        if (is_last_call) {
+            CallMacroMethod(executing_macro, macro_params);
             macro_params.clear();
         }
         return;
@@ -166,7 +173,7 @@ void Maxwell3D::CallMethod(const GPU::MethodCall& method_call) {
     ASSERT_MSG(method < Regs::NUM_REGS,
                "Invalid Maxwell3D register, increase the size of the Regs structure");
 
-    u32 arg = method_call.argument;
+    u32 arg = method_argument;
     // Keep track of the register value in shadow_state when requested.
     if (shadow_state.shadow_ram_control == Regs::ShadowRamControl::Track ||
         shadow_state.shadow_ram_control == Regs::ShadowRamControl::TrackWithFilter) {
@@ -189,11 +196,11 @@ void Maxwell3D::CallMethod(const GPU::MethodCall& method_call) {
         break;
     }
     case MAXWELL3D_REG_INDEX(shadow_ram_control): {
-        shadow_state.shadow_ram_control = static_cast<Regs::ShadowRamControl>(method_call.argument);
+        shadow_state.shadow_ram_control = static_cast<Regs::ShadowRamControl>(method_argument);
         break;
     }
     case MAXWELL3D_REG_INDEX(macros.data): {
-        ProcessMacroUpload(arg);
+        macro_engine->AddCode(regs.macros.upload_address, arg);
         break;
     }
     case MAXWELL3D_REG_INDEX(macros.bind): {
@@ -272,7 +279,6 @@ void Maxwell3D::CallMethod(const GPU::MethodCall& method_call) {
         break;
     }
     case MAXWELL3D_REG_INDEX(data_upload): {
-        const bool is_last_call = method_call.IsLastCall();
         upload_state.ProcessData(arg, is_last_call);
         if (is_last_call) {
             OnMemoryWrite();
@@ -303,7 +309,7 @@ void Maxwell3D::CallMultiMethod(u32 method, const u32* base_start, u32 amount,
 
         // Call the macro when there are no more parameters in the command buffer
         if (amount == methods_pending) {
-            CallMacroMethod(executing_macro, macro_params.size(), macro_params.data());
+            CallMacroMethod(executing_macro, macro_params);
             macro_params.clear();
         }
         return;
@@ -330,7 +336,7 @@ void Maxwell3D::CallMultiMethod(u32 method, const u32* base_start, u32 amount,
     }
     default: {
         for (std::size_t i = 0; i < amount; i++) {
-            CallMethod({method, base_start[i], 0, methods_pending - static_cast<u32>(i)});
+            CallMethod(method, base_start[i], methods_pending - static_cast<u32>(i) <= 1);
         }
     }
     }
@@ -360,16 +366,15 @@ void Maxwell3D::StepInstance(const MMEDrawMode expected_mode, const u32 count) {
     StepInstance(expected_mode, count);
 }
 
-void Maxwell3D::CallMethodFromMME(const GPU::MethodCall& method_call) {
-    const u32 method = method_call.method;
+void Maxwell3D::CallMethodFromMME(u32 method, u32 method_argument) {
     if (mme_inline[method]) {
-        regs.reg_array[method] = method_call.argument;
+        regs.reg_array[method] = method_argument;
         if (method == MAXWELL3D_REG_INDEX(vertex_buffer.count) ||
             method == MAXWELL3D_REG_INDEX(index_array.count)) {
             const MMEDrawMode expected_mode = method == MAXWELL3D_REG_INDEX(vertex_buffer.count)
                                                   ? MMEDrawMode::Array
                                                   : MMEDrawMode::Indexed;
-            StepInstance(expected_mode, method_call.argument);
+            StepInstance(expected_mode, method_argument);
         } else if (method == MAXWELL3D_REG_INDEX(draw.vertex_begin_gl)) {
             mme_draw.instance_mode =
                 (regs.draw.instance_next != 0) || (regs.draw.instance_cont != 0);
@@ -381,7 +386,7 @@ void Maxwell3D::CallMethodFromMME(const GPU::MethodCall& method_call) {
         if (mme_draw.current_mode != MMEDrawMode::Undefined) {
             FlushMMEInlineDraw();
         }
-        CallMethod(method_call);
+        CallMethod(method, method_argument, true);
     }
 }
 
@@ -418,9 +423,7 @@ void Maxwell3D::FlushMMEInlineDraw() {
 }
 
 void Maxwell3D::ProcessMacroUpload(u32 data) {
-    ASSERT_MSG(regs.macros.upload_address < macro_memory.size(),
-               "upload_address exceeded macro_memory size!");
-    macro_memory[regs.macros.upload_address++] = data;
+    macro_engine->AddCode(regs.macros.upload_address++, data);
 }
 
 void Maxwell3D::ProcessMacroBind(u32 data) {
@@ -455,8 +458,9 @@ void Maxwell3D::StampQueryResult(u64 payload, bool long_query) {
 
 void Maxwell3D::ProcessQueryGet() {
     // TODO(Subv): Support the other query units.
-    ASSERT_MSG(regs.query.query_get.unit == Regs::QueryUnit::Crop,
-               "Units other than CROP are unimplemented");
+    if (regs.query.query_get.unit != Regs::QueryUnit::Crop) {
+        LOG_DEBUG(HW_GPU, "Units other than CROP are unimplemented");
+    }
 
     switch (regs.query.query_get.operation) {
     case Regs::QueryOperation::Release:
@@ -532,8 +536,8 @@ void Maxwell3D::ProcessCounterReset() {
         rasterizer.ResetCounter(QueryType::SamplesPassed);
         break;
     default:
-        LOG_WARNING(Render_OpenGL, "Unimplemented counter reset={}",
-                    static_cast<int>(regs.counter_reset));
+        LOG_DEBUG(Render_OpenGL, "Unimplemented counter reset={}",
+                  static_cast<int>(regs.counter_reset));
         break;
     }
 }
@@ -590,8 +594,8 @@ std::optional<u64> Maxwell3D::GetQueryResult() {
                          system.GPU().GetTicks());
         return {};
     default:
-        UNIMPLEMENTED_MSG("Unimplemented query select type {}",
-                          static_cast<u32>(regs.query.query_get.select.Value()));
+        LOG_DEBUG(HW_GPU, "Unimplemented query select type {}",
+                  static_cast<u32>(regs.query.query_get.select.Value()));
         return 1;
     }
 }
@@ -736,8 +740,11 @@ SamplerDescriptor Maxwell3D::AccessBindlessSampler(ShaderType stage, u64 const_b
     const auto& shader = state.shader_stages[static_cast<std::size_t>(stage)];
     const auto& tex_info_buffer = shader.const_buffers[const_buffer];
     const GPUVAddr tex_info_address = tex_info_buffer.address + offset;
+    return AccessSampler(memory_manager.Read<u32>(tex_info_address));
+}
 
-    const Texture::TextureHandle tex_handle{memory_manager.Read<u32>(tex_info_address)};
+SamplerDescriptor Maxwell3D::AccessSampler(u32 handle) const {
+    const Texture::TextureHandle tex_handle{handle};
     const Texture::FullTextureInfo tex_info = GetTextureInfo(tex_handle);
     SamplerDescriptor result = SamplerDescriptor::FromTIC(tex_info.tic);
     result.is_shadow.Assign(tex_info.tsc.depth_compare_enabled.Value());

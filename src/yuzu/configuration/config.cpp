@@ -211,7 +211,7 @@ const std::array<int, Settings::NativeKeyboard::NumKeyboardMods> Config::default
 // This must be in alphabetical order according to action name as it must have the same order as
 // UISetting::values.shortcuts, which is alphabetically ordered.
 // clang-format off
-const std::array<UISettings::Shortcut, 15> Config::default_hotkeys{{
+const std::array<UISettings::Shortcut, 16> Config::default_hotkeys{{
     {QStringLiteral("Capture Screenshot"),       QStringLiteral("Main Window"), {QStringLiteral("Ctrl+P"), Qt::ApplicationShortcut}},
     {QStringLiteral("Change Docked Mode"),       QStringLiteral("Main Window"), {QStringLiteral("F10"), Qt::ApplicationShortcut}},
     {QStringLiteral("Continue/Pause Emulation"), QStringLiteral("Main Window"), {QStringLiteral("F4"), Qt::WindowShortcut}},
@@ -222,6 +222,7 @@ const std::array<UISettings::Shortcut, 15> Config::default_hotkeys{{
     {QStringLiteral("Increase Speed Limit"),     QStringLiteral("Main Window"), {QStringLiteral("+"), Qt::ApplicationShortcut}},
     {QStringLiteral("Load Amiibo"),              QStringLiteral("Main Window"), {QStringLiteral("F2"), Qt::ApplicationShortcut}},
     {QStringLiteral("Load File"),                QStringLiteral("Main Window"), {QStringLiteral("Ctrl+O"), Qt::WindowShortcut}},
+    {QStringLiteral("Mute Audio"),               QStringLiteral("Main Window"), {QStringLiteral("Ctrl+M"), Qt::WindowShortcut}},
     {QStringLiteral("Restart Emulation"),        QStringLiteral("Main Window"), {QStringLiteral("F6"), Qt::WindowShortcut}},
     {QStringLiteral("Stop Emulation"),           QStringLiteral("Main Window"), {QStringLiteral("F5"), Qt::WindowShortcut}},
     {QStringLiteral("Toggle Filter Bar"),        QStringLiteral("Main Window"), {QStringLiteral("Ctrl+F"), Qt::WindowShortcut}},
@@ -560,6 +561,8 @@ void Config::ReadDebuggingValues() {
     Settings::values.quest_flag = ReadSetting(QStringLiteral("quest_flag"), false).toBool();
     Settings::values.disable_cpu_opt =
         ReadSetting(QStringLiteral("disable_cpu_opt"), false).toBool();
+    Settings::values.disable_macro_jit =
+        ReadSetting(QStringLiteral("disable_macro_jit"), false).toBool();
 
     qt_config->endGroup();
 }
@@ -656,13 +659,11 @@ void Config::ReadRendererValues() {
         static_cast<Settings::RendererBackend>(ReadSetting(QStringLiteral("backend"), 0).toInt());
     Settings::values.renderer_debug = ReadSetting(QStringLiteral("debug"), false).toBool();
     Settings::values.vulkan_device = ReadSetting(QStringLiteral("vulkan_device"), 0).toInt();
-    Settings::values.resolution_factor =
-        ReadSetting(QStringLiteral("resolution_factor"), 1.0).toFloat();
     Settings::values.aspect_ratio = ReadSetting(QStringLiteral("aspect_ratio"), 0).toInt();
     Settings::values.max_anisotropy = ReadSetting(QStringLiteral("max_anisotropy"), 0).toInt();
     Settings::values.use_frame_limit =
         ReadSetting(QStringLiteral("use_frame_limit"), true).toBool();
-    Settings::values.frame_limit = ReadSetting(QStringLiteral("frame_limit"), 100).toInt();
+    Settings::values.frame_limit = ReadSetting(QStringLiteral("frame_limit"), 100).toUInt();
     Settings::values.use_disk_shader_cache =
         ReadSetting(QStringLiteral("use_disk_shader_cache"), true).toBool();
     const int gpu_accuracy_level = ReadSetting(QStringLiteral("gpu_accuracy"), 0).toInt();
@@ -670,6 +671,8 @@ void Config::ReadRendererValues() {
     Settings::values.use_asynchronous_gpu_emulation =
         ReadSetting(QStringLiteral("use_asynchronous_gpu_emulation"), false).toBool();
     Settings::values.use_vsync = ReadSetting(QStringLiteral("use_vsync"), true).toBool();
+    Settings::values.use_assembly_shaders =
+        ReadSetting(QStringLiteral("use_assembly_shaders"), false).toBool();
     Settings::values.use_fast_gpu_time =
         ReadSetting(QStringLiteral("use_fast_gpu_time"), true).toBool();
     Settings::values.force_30fps_mode =
@@ -714,6 +717,8 @@ void Config::ReadSystemValues() {
 
     Settings::values.region_index = ReadSetting(QStringLiteral("region_index"), 1).toInt();
 
+    Settings::values.time_zone_index = ReadSetting(QStringLiteral("time_zone_index"), 0).toInt();
+
     const auto rng_seed_enabled = ReadSetting(QStringLiteral("rng_seed_enabled"), false).toBool();
     if (rng_seed_enabled) {
         Settings::values.rng_seed = ReadSetting(QStringLiteral("rng_seed"), 0).toULongLong();
@@ -743,8 +748,6 @@ void Config::ReadUIValues() {
             .toString();
     UISettings::values.enable_discord_presence =
         ReadSetting(QStringLiteral("enable_discord_presence"), true).toBool();
-    UISettings::values.screenshot_resolution_factor =
-        static_cast<u16>(ReadSetting(QStringLiteral("screenshot_resolution_factor"), 0).toUInt());
     UISettings::values.select_user_on_boot =
         ReadSetting(QStringLiteral("select_user_on_boot"), false).toBool();
 
@@ -1044,6 +1047,7 @@ void Config::SaveDebuggingValues() {
     WriteSetting(QStringLiteral("dump_nso"), Settings::values.dump_nso, false);
     WriteSetting(QStringLiteral("quest_flag"), Settings::values.quest_flag, false);
     WriteSetting(QStringLiteral("disable_cpu_opt"), Settings::values.disable_cpu_opt, false);
+    WriteSetting(QStringLiteral("disable_macro_jit"), Settings::values.disable_macro_jit, false);
 
     qt_config->endGroup();
 }
@@ -1112,8 +1116,6 @@ void Config::SaveRendererValues() {
     WriteSetting(QStringLiteral("backend"), static_cast<int>(Settings::values.renderer_backend), 0);
     WriteSetting(QStringLiteral("debug"), Settings::values.renderer_debug, false);
     WriteSetting(QStringLiteral("vulkan_device"), Settings::values.vulkan_device, 0);
-    WriteSetting(QStringLiteral("resolution_factor"),
-                 static_cast<double>(Settings::values.resolution_factor), 1.0);
     WriteSetting(QStringLiteral("aspect_ratio"), Settings::values.aspect_ratio, 0);
     WriteSetting(QStringLiteral("max_anisotropy"), Settings::values.max_anisotropy, 0);
     WriteSetting(QStringLiteral("use_frame_limit"), Settings::values.use_frame_limit, true);
@@ -1125,6 +1127,8 @@ void Config::SaveRendererValues() {
     WriteSetting(QStringLiteral("use_asynchronous_gpu_emulation"),
                  Settings::values.use_asynchronous_gpu_emulation, false);
     WriteSetting(QStringLiteral("use_vsync"), Settings::values.use_vsync, true);
+    WriteSetting(QStringLiteral("use_assembly_shaders"), Settings::values.use_assembly_shaders,
+                 false);
     WriteSetting(QStringLiteral("use_fast_gpu_time"), Settings::values.use_fast_gpu_time, true);
     WriteSetting(QStringLiteral("force_30fps_mode"), Settings::values.force_30fps_mode, false);
 
@@ -1163,6 +1167,7 @@ void Config::SaveSystemValues() {
     WriteSetting(QStringLiteral("current_user"), Settings::values.current_user, 0);
     WriteSetting(QStringLiteral("language_index"), Settings::values.language_index, 1);
     WriteSetting(QStringLiteral("region_index"), Settings::values.region_index, 1);
+    WriteSetting(QStringLiteral("time_zone_index"), Settings::values.time_zone_index, 0);
 
     WriteSetting(QStringLiteral("rng_seed_enabled"), Settings::values.rng_seed.has_value(), false);
     WriteSetting(QStringLiteral("rng_seed"), Settings::values.rng_seed.value_or(0), 0);
@@ -1186,8 +1191,6 @@ void Config::SaveUIValues() {
                  QString::fromUtf8(UISettings::themes[0].second));
     WriteSetting(QStringLiteral("enable_discord_presence"),
                  UISettings::values.enable_discord_presence, true);
-    WriteSetting(QStringLiteral("screenshot_resolution_factor"),
-                 UISettings::values.screenshot_resolution_factor, 0);
     WriteSetting(QStringLiteral("select_user_on_boot"), UISettings::values.select_user_on_boot,
                  false);
 

@@ -181,9 +181,10 @@ private slots:
     void OnPauseGame();
     void OnStopGame();
     void OnMenuReportCompatibility();
+    void OnOpenModsPage();
     /// Called whenever a user selects a game in the game list widget.
     void OnGameListLoadFile(QString game_path);
-    void OnGameListOpenFolder(u64 program_id, GameListOpenTarget target);
+    void OnGameListOpenFolder(GameListOpenTarget target, const std::string& game_path);
     void OnTransferableShaderCacheOpenFile(u64 program_id);
     void OnGameListDumpRomFS(u64 program_id, const std::string& game_path);
     void OnGameListCopyTID(u64 program_id);
@@ -208,6 +209,7 @@ private slots:
     void ShowFullscreen();
     void HideFullscreen();
     void ToggleWindowMode();
+    void ResetWindowSize();
     void OnCaptureScreenshot();
     void OnCoreError(Core::System::ResultStatus, std::string);
     void OnReinitializeKeys(ReinitializeKeyBehavior behavior);

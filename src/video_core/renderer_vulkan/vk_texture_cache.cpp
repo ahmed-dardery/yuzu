@@ -100,8 +100,8 @@ vk::Buffer CreateBuffer(const VKDevice& device, const SurfaceParams& params,
     ci.pNext = nullptr;
     ci.flags = 0;
     ci.size = static_cast<VkDeviceSize>(host_memory_size);
-    ci.usage = VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-               VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    ci.usage = VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
+               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.queueFamilyIndexCount = 0;
     ci.pQueueFamilyIndices = nullptr;
@@ -167,6 +167,7 @@ VkImageCreateInfo GenerateImageCreateInfo(const VKDevice& device, const SurfaceP
         ci.extent = {params.width, params.height, 1};
         break;
     case SurfaceTarget::Texture3D:
+        ci.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
         ci.extent = {params.width, params.height, params.depth};
         break;
     case SurfaceTarget::TextureBuffer:
@@ -174,6 +175,12 @@ VkImageCreateInfo GenerateImageCreateInfo(const VKDevice& device, const SurfaceP
     }
 
     return ci;
+}
+
+u32 EncodeSwizzle(Tegra::Texture::SwizzleSource x_source, Tegra::Texture::SwizzleSource y_source,
+                  Tegra::Texture::SwizzleSource z_source, Tegra::Texture::SwizzleSource w_source) {
+    return (static_cast<u32>(x_source) << 24) | (static_cast<u32>(y_source) << 16) |
+           (static_cast<u32>(z_source) << 8) | static_cast<u32>(w_source);
 }
 
 } // Anonymous namespace
@@ -203,9 +210,11 @@ CachedSurface::CachedSurface(Core::System& system, const VKDevice& device,
     }
 
     // TODO(Rodrigo): Move this to a virtual function.
-    main_view = CreateViewInner(
-        ViewParams(params.target, 0, static_cast<u32>(params.GetNumLayers()), 0, params.num_levels),
-        true);
+    u32 num_layers = 1;
+    if (params.is_layered || params.target == SurfaceTarget::Texture3D) {
+        num_layers = params.depth;
+    }
+    main_view = CreateView(ViewParams(params.target, 0, num_layers, 0, params.num_levels));
 }
 
 CachedSurface::~CachedSurface() = default;
@@ -253,12 +262,8 @@ void CachedSurface::DecorateSurfaceName() {
 }
 
 View CachedSurface::CreateView(const ViewParams& params) {
-    return CreateViewInner(params, false);
-}
-
-View CachedSurface::CreateViewInner(const ViewParams& params, bool is_proxy) {
     // TODO(Rodrigo): Add name decorations
-    return views[params] = std::make_shared<CachedSurfaceView>(device, *this, params, is_proxy);
+    return views[params] = std::make_shared<CachedSurfaceView>(device, *this, params);
 }
 
 void CachedSurface::UploadBuffer(const std::vector<u8>& staging_buffer) {
@@ -342,38 +347,44 @@ VkImageSubresourceRange CachedSurface::GetImageSubresourceRange() const {
 }
 
 CachedSurfaceView::CachedSurfaceView(const VKDevice& device, CachedSurface& surface,
-                                     const ViewParams& params, bool is_proxy)
+                                     const ViewParams& params)
     : VideoCommon::ViewBase{params}, params{surface.GetSurfaceParams()},
       image{surface.GetImageHandle()}, buffer_view{surface.GetBufferViewHandle()},
       aspect_mask{surface.GetAspectMask()}, device{device}, surface{surface},
-      base_layer{params.base_layer}, num_layers{params.num_layers}, base_level{params.base_level},
-      num_levels{params.num_levels}, image_view_type{image ? GetImageViewType(params.target)
-                                                           : VK_IMAGE_VIEW_TYPE_1D} {}
+      base_level{params.base_level}, num_levels{params.num_levels},
+      image_view_type{image ? GetImageViewType(params.target) : VK_IMAGE_VIEW_TYPE_1D} {
+    if (image_view_type == VK_IMAGE_VIEW_TYPE_3D) {
+        base_layer = 0;
+        num_layers = 1;
+        base_slice = params.base_layer;
+        num_slices = params.num_layers;
+    } else {
+        base_layer = params.base_layer;
+        num_layers = params.num_layers;
+    }
+}
 
 CachedSurfaceView::~CachedSurfaceView() = default;
 
-VkImageView CachedSurfaceView::GetHandle(SwizzleSource x_source, SwizzleSource y_source,
-                                         SwizzleSource z_source, SwizzleSource w_source) {
-    const u32 swizzle = EncodeSwizzle(x_source, y_source, z_source, w_source);
-    if (last_image_view && last_swizzle == swizzle) {
+VkImageView CachedSurfaceView::GetImageView(SwizzleSource x_source, SwizzleSource y_source,
+                                            SwizzleSource z_source, SwizzleSource w_source) {
+    const u32 new_swizzle = EncodeSwizzle(x_source, y_source, z_source, w_source);
+    if (last_image_view && last_swizzle == new_swizzle) {
         return last_image_view;
     }
-    last_swizzle = swizzle;
+    last_swizzle = new_swizzle;
 
-    const auto [entry, is_cache_miss] = view_cache.try_emplace(swizzle);
+    const auto [entry, is_cache_miss] = view_cache.try_emplace(new_swizzle);
     auto& image_view = entry->second;
     if (!is_cache_miss) {
         return last_image_view = *image_view;
     }
 
-    auto swizzle_x = MaxwellToVK::SwizzleSource(x_source);
-    auto swizzle_y = MaxwellToVK::SwizzleSource(y_source);
-    auto swizzle_z = MaxwellToVK::SwizzleSource(z_source);
-    auto swizzle_w = MaxwellToVK::SwizzleSource(w_source);
-
+    std::array swizzle{MaxwellToVK::SwizzleSource(x_source), MaxwellToVK::SwizzleSource(y_source),
+                       MaxwellToVK::SwizzleSource(z_source), MaxwellToVK::SwizzleSource(w_source)};
     if (params.pixel_format == VideoCore::Surface::PixelFormat::A1B5G5R5U) {
         // A1B5G5R5 is implemented as A1R5G5B5, we have to change the swizzle here.
-        std::swap(swizzle_x, swizzle_z);
+        std::swap(swizzle[0], swizzle[2]);
     }
 
     // Games can sample depth or stencil values on textures. This is decided by the swizzle value on
@@ -395,11 +406,16 @@ VkImageView CachedSurfaceView::GetHandle(SwizzleSource x_source, SwizzleSource y
             UNIMPLEMENTED();
         }
 
-        // Vulkan doesn't seem to understand swizzling of a depth stencil image, use identity
-        swizzle_x = VK_COMPONENT_SWIZZLE_R;
-        swizzle_y = VK_COMPONENT_SWIZZLE_G;
-        swizzle_z = VK_COMPONENT_SWIZZLE_B;
-        swizzle_w = VK_COMPONENT_SWIZZLE_A;
+        // Make sure we sample the first component
+        std::transform(
+            swizzle.begin(), swizzle.end(), swizzle.begin(), [](VkComponentSwizzle component) {
+                return component == VK_COMPONENT_SWIZZLE_G ? VK_COMPONENT_SWIZZLE_R : component;
+            });
+    }
+
+    if (image_view_type == VK_IMAGE_VIEW_TYPE_3D) {
+        ASSERT(base_slice == 0);
+        ASSERT(num_slices == params.depth);
     }
 
     VkImageViewCreateInfo ci;
@@ -409,7 +425,7 @@ VkImageView CachedSurfaceView::GetHandle(SwizzleSource x_source, SwizzleSource y
     ci.image = surface.GetImageHandle();
     ci.viewType = image_view_type;
     ci.format = surface.GetImage().GetFormat();
-    ci.components = {swizzle_x, swizzle_y, swizzle_z, swizzle_w};
+    ci.components = {swizzle[0], swizzle[1], swizzle[2], swizzle[3]};
     ci.subresourceRange.aspectMask = aspect;
     ci.subresourceRange.baseMipLevel = base_level;
     ci.subresourceRange.levelCount = num_levels;
@@ -418,6 +434,35 @@ VkImageView CachedSurfaceView::GetHandle(SwizzleSource x_source, SwizzleSource y
     image_view = device.GetLogical().CreateImageView(ci);
 
     return last_image_view = *image_view;
+}
+
+VkImageView CachedSurfaceView::GetAttachment() {
+    if (render_target) {
+        return *render_target;
+    }
+
+    VkImageViewCreateInfo ci;
+    ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    ci.pNext = nullptr;
+    ci.flags = 0;
+    ci.image = surface.GetImageHandle();
+    ci.format = surface.GetImage().GetFormat();
+    ci.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                     VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    ci.subresourceRange.aspectMask = aspect_mask;
+    ci.subresourceRange.baseMipLevel = base_level;
+    ci.subresourceRange.levelCount = num_levels;
+    if (image_view_type == VK_IMAGE_VIEW_TYPE_3D) {
+        ci.viewType = num_slices > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        ci.subresourceRange.baseArrayLayer = base_slice;
+        ci.subresourceRange.layerCount = num_slices;
+    } else {
+        ci.viewType = image_view_type;
+        ci.subresourceRange.baseArrayLayer = base_layer;
+        ci.subresourceRange.layerCount = num_layers;
+    }
+    render_target = device.GetLogical().CreateImageView(ci);
+    return *render_target;
 }
 
 VKTextureCache::VKTextureCache(Core::System& system, VideoCore::RasterizerInterface& rasterizer,

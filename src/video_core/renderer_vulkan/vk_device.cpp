@@ -73,74 +73,79 @@ VkFormatFeatureFlags GetFormatFeatures(VkFormatProperties properties, FormatType
 
 std::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(
     vk::PhysicalDevice physical, const vk::InstanceDispatch& dld) {
-    static constexpr std::array formats{VK_FORMAT_A8B8G8R8_UNORM_PACK32,
-                                        VK_FORMAT_A8B8G8R8_UINT_PACK32,
-                                        VK_FORMAT_A8B8G8R8_SNORM_PACK32,
-                                        VK_FORMAT_A8B8G8R8_SRGB_PACK32,
-                                        VK_FORMAT_B5G6R5_UNORM_PACK16,
-                                        VK_FORMAT_A2B10G10R10_UNORM_PACK32,
-                                        VK_FORMAT_A1R5G5B5_UNORM_PACK16,
-                                        VK_FORMAT_R32G32B32A32_SFLOAT,
-                                        VK_FORMAT_R32G32B32A32_UINT,
-                                        VK_FORMAT_R32G32_SFLOAT,
-                                        VK_FORMAT_R32G32_UINT,
-                                        VK_FORMAT_R16G16B16A16_UINT,
-                                        VK_FORMAT_R16G16B16A16_SNORM,
-                                        VK_FORMAT_R16G16B16A16_UNORM,
-                                        VK_FORMAT_R16G16_UNORM,
-                                        VK_FORMAT_R16G16_SNORM,
-                                        VK_FORMAT_R16G16_SFLOAT,
-                                        VK_FORMAT_R16_UNORM,
-                                        VK_FORMAT_R8G8B8A8_SRGB,
-                                        VK_FORMAT_R8G8_UNORM,
-                                        VK_FORMAT_R8G8_SNORM,
-                                        VK_FORMAT_R8_UNORM,
-                                        VK_FORMAT_R8_UINT,
-                                        VK_FORMAT_B10G11R11_UFLOAT_PACK32,
-                                        VK_FORMAT_R32_SFLOAT,
-                                        VK_FORMAT_R32_UINT,
-                                        VK_FORMAT_R32_SINT,
-                                        VK_FORMAT_R16_SFLOAT,
-                                        VK_FORMAT_R16G16B16A16_SFLOAT,
-                                        VK_FORMAT_B8G8R8A8_UNORM,
-                                        VK_FORMAT_R4G4B4A4_UNORM_PACK16,
-                                        VK_FORMAT_D32_SFLOAT,
-                                        VK_FORMAT_D16_UNORM,
-                                        VK_FORMAT_D16_UNORM_S8_UINT,
-                                        VK_FORMAT_D24_UNORM_S8_UINT,
-                                        VK_FORMAT_D32_SFLOAT_S8_UINT,
-                                        VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
-                                        VK_FORMAT_BC2_UNORM_BLOCK,
-                                        VK_FORMAT_BC3_UNORM_BLOCK,
-                                        VK_FORMAT_BC4_UNORM_BLOCK,
-                                        VK_FORMAT_BC5_UNORM_BLOCK,
-                                        VK_FORMAT_BC5_SNORM_BLOCK,
-                                        VK_FORMAT_BC7_UNORM_BLOCK,
-                                        VK_FORMAT_BC6H_UFLOAT_BLOCK,
-                                        VK_FORMAT_BC6H_SFLOAT_BLOCK,
-                                        VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
-                                        VK_FORMAT_BC2_SRGB_BLOCK,
-                                        VK_FORMAT_BC3_SRGB_BLOCK,
-                                        VK_FORMAT_BC7_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_8x8_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_8x5_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_5x4_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_5x5_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_5x5_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_10x8_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_10x8_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_6x6_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_6x6_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_10x10_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_10x10_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_12x12_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_12x12_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_8x6_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_8x6_SRGB_BLOCK,
-                                        VK_FORMAT_ASTC_6x5_UNORM_BLOCK,
-                                        VK_FORMAT_ASTC_6x5_SRGB_BLOCK,
-                                        VK_FORMAT_E5B9G9R9_UFLOAT_PACK32};
+    static constexpr std::array formats{
+        VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+        VK_FORMAT_A8B8G8R8_UINT_PACK32,
+        VK_FORMAT_A8B8G8R8_SNORM_PACK32,
+        VK_FORMAT_A8B8G8R8_SRGB_PACK32,
+        VK_FORMAT_B5G6R5_UNORM_PACK16,
+        VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+        VK_FORMAT_A1R5G5B5_UNORM_PACK16,
+        VK_FORMAT_R32G32B32A32_SFLOAT,
+        VK_FORMAT_R32G32B32A32_UINT,
+        VK_FORMAT_R32G32_SFLOAT,
+        VK_FORMAT_R32G32_UINT,
+        VK_FORMAT_R16G16B16A16_UINT,
+        VK_FORMAT_R16G16B16A16_SNORM,
+        VK_FORMAT_R16G16B16A16_UNORM,
+        VK_FORMAT_R16G16_UNORM,
+        VK_FORMAT_R16G16_SNORM,
+        VK_FORMAT_R16G16_SFLOAT,
+        VK_FORMAT_R16_UNORM,
+        VK_FORMAT_R16_UINT,
+        VK_FORMAT_R8G8B8A8_SRGB,
+        VK_FORMAT_R8G8_UNORM,
+        VK_FORMAT_R8G8_SNORM,
+        VK_FORMAT_R8G8_UINT,
+        VK_FORMAT_R8_UNORM,
+        VK_FORMAT_R8_UINT,
+        VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+        VK_FORMAT_R32_SFLOAT,
+        VK_FORMAT_R32_UINT,
+        VK_FORMAT_R32_SINT,
+        VK_FORMAT_R16_SFLOAT,
+        VK_FORMAT_R16G16B16A16_SFLOAT,
+        VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_B8G8R8A8_SRGB,
+        VK_FORMAT_R4G4B4A4_UNORM_PACK16,
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D16_UNORM,
+        VK_FORMAT_D16_UNORM_S8_UINT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+        VK_FORMAT_D32_SFLOAT_S8_UINT,
+        VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
+        VK_FORMAT_BC2_UNORM_BLOCK,
+        VK_FORMAT_BC3_UNORM_BLOCK,
+        VK_FORMAT_BC4_UNORM_BLOCK,
+        VK_FORMAT_BC5_UNORM_BLOCK,
+        VK_FORMAT_BC5_SNORM_BLOCK,
+        VK_FORMAT_BC7_UNORM_BLOCK,
+        VK_FORMAT_BC6H_UFLOAT_BLOCK,
+        VK_FORMAT_BC6H_SFLOAT_BLOCK,
+        VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
+        VK_FORMAT_BC2_SRGB_BLOCK,
+        VK_FORMAT_BC3_SRGB_BLOCK,
+        VK_FORMAT_BC7_SRGB_BLOCK,
+        VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
+        VK_FORMAT_ASTC_8x8_SRGB_BLOCK,
+        VK_FORMAT_ASTC_8x5_SRGB_BLOCK,
+        VK_FORMAT_ASTC_5x4_SRGB_BLOCK,
+        VK_FORMAT_ASTC_5x5_UNORM_BLOCK,
+        VK_FORMAT_ASTC_5x5_SRGB_BLOCK,
+        VK_FORMAT_ASTC_10x8_UNORM_BLOCK,
+        VK_FORMAT_ASTC_10x8_SRGB_BLOCK,
+        VK_FORMAT_ASTC_6x6_UNORM_BLOCK,
+        VK_FORMAT_ASTC_6x6_SRGB_BLOCK,
+        VK_FORMAT_ASTC_10x10_UNORM_BLOCK,
+        VK_FORMAT_ASTC_10x10_SRGB_BLOCK,
+        VK_FORMAT_ASTC_12x12_UNORM_BLOCK,
+        VK_FORMAT_ASTC_12x12_SRGB_BLOCK,
+        VK_FORMAT_ASTC_8x6_UNORM_BLOCK,
+        VK_FORMAT_ASTC_8x6_SRGB_BLOCK,
+        VK_FORMAT_ASTC_6x5_UNORM_BLOCK,
+        VK_FORMAT_ASTC_6x5_SRGB_BLOCK,
+        VK_FORMAT_E5B9G9R9_UFLOAT_PACK32,
+    };
     std::unordered_map<VkFormat, VkFormatProperties> format_properties;
     for (const auto format : formats) {
         format_properties.emplace(format, physical.GetFormatProperties(format));
@@ -260,6 +265,10 @@ bool VKDevice::Create() {
         LOG_INFO(Render_Vulkan, "Device doesn't support float16 natively");
     }
 
+    if (!nv_viewport_swizzle) {
+        LOG_INFO(Render_Vulkan, "Device doesn't support viewport swizzles");
+    }
+
     VkPhysicalDeviceUniformBufferStandardLayoutFeaturesKHR std430_layout;
     if (khr_uniform_buffer_standard_layout) {
         std430_layout.sType =
@@ -291,6 +300,17 @@ bool VKDevice::Create() {
         SetNext(next, transform_feedback);
     } else {
         LOG_INFO(Render_Vulkan, "Device doesn't support transform feedbacks");
+    }
+
+    VkPhysicalDeviceCustomBorderColorFeaturesEXT custom_border;
+    if (ext_custom_border_color) {
+        custom_border.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
+        custom_border.pNext = nullptr;
+        custom_border.customBorderColors = VK_TRUE;
+        custom_border.customBorderColorWithoutFormat = VK_TRUE;
+        SetNext(next, custom_border);
+    } else {
+        LOG_INFO(Render_Vulkan, "Device doesn't support custom border colors");
     }
 
     if (!ext_depth_range_unrestricted) {
@@ -520,7 +540,9 @@ std::vector<const char*> VKDevice::LoadExtensions() {
     bool has_khr_shader_float16_int8{};
     bool has_ext_subgroup_size_control{};
     bool has_ext_transform_feedback{};
+    bool has_ext_custom_border_color{};
     for (const auto& extension : physical.EnumerateDeviceExtensionProperties()) {
+        Test(extension, nv_viewport_swizzle, VK_NV_VIEWPORT_SWIZZLE_EXTENSION_NAME, true);
         Test(extension, khr_uniform_buffer_standard_layout,
              VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME, true);
         Test(extension, has_khr_shader_float16_int8, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
@@ -533,6 +555,8 @@ std::vector<const char*> VKDevice::LoadExtensions() {
         Test(extension, has_ext_subgroup_size_control, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
              false);
         Test(extension, has_ext_transform_feedback, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,
+             false);
+        Test(extension, has_ext_custom_border_color, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME,
              false);
         if (Settings::values.renderer_debug) {
             Test(extension, nv_device_diagnostics_config,
@@ -603,6 +627,19 @@ std::vector<const char*> VKDevice::LoadExtensions() {
             tfb_properties.transformFeedbackDraw) {
             extensions.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
             ext_transform_feedback = true;
+        }
+    }
+
+    if (has_ext_custom_border_color) {
+        VkPhysicalDeviceCustomBorderColorFeaturesEXT border_features;
+        border_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
+        border_features.pNext = nullptr;
+        features.pNext = &border_features;
+        physical.GetFeatures2KHR(features);
+
+        if (border_features.customBorderColors && border_features.customBorderColorWithoutFormat) {
+            extensions.push_back(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+            ext_custom_border_color = true;
         }
     }
 

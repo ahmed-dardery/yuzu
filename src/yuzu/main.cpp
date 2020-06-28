@@ -56,6 +56,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QShortcut>
 #include <QStatusBar>
 #include <QSysInfo>
+#include <QUrl>
 #include <QtConcurrent/QtConcurrent>
 
 #include <fmt/format.h>
@@ -65,6 +66,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "common/logging/log.h"
+#include "common/memory_detect.h"
 #include "common/microprofile.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
@@ -216,9 +218,26 @@ GMainWindow::GMainWindow()
     LOG_INFO(Frontend, "yuzu Version: {} | {}-{}", yuzu_build_version, Common::g_scm_branch,
              Common::g_scm_desc);
 #ifdef ARCHITECTURE_x86_64
-    LOG_INFO(Frontend, "Host CPU: {}", Common::GetCPUCaps().cpu_string);
+    const auto& caps = Common::GetCPUCaps();
+    std::string cpu_string = caps.cpu_string;
+    if (caps.avx || caps.avx2 || caps.avx512) {
+        cpu_string += " | AVX";
+        if (caps.avx512) {
+            cpu_string += "512";
+        } else if (caps.avx2) {
+            cpu_string += '2';
+        }
+        if (caps.fma || caps.fma4) {
+            cpu_string += " | FMA";
+        }
+    }
+    LOG_INFO(Frontend, "Host CPU: {}", cpu_string);
 #endif
     LOG_INFO(Frontend, "Host OS: {}", QSysInfo::prettyProductName().toStdString());
+    LOG_INFO(Frontend, "Host RAM: {:.2f} GB",
+             Common::GetMemInfo().TotalPhysicalMemory / 1024.0f / 1024 / 1024);
+    LOG_INFO(Frontend, "Host Swap: {:.2f} GB",
+             Common::GetMemInfo().TotalSwapMemory / 1024.0f / 1024 / 1024);
     UpdateWindowTitle();
 
     show();
@@ -684,10 +703,7 @@ void GMainWindow::InitializeHotkeys() {
                 Settings::values.use_frame_limit = !Settings::values.use_frame_limit;
                 UpdateStatusBar();
             });
-    // TODO: Remove this comment/static whenever the next major release of
-    // MSVC occurs and we make it a requirement (see:
-    // https://developercommunity.visualstudio.com/content/problem/93922/constexprs-are-trying-to-be-captured-in-lambda-fun.html)
-    static constexpr u16 SPEED_LIMIT_STEP = 5;
+    constexpr u16 SPEED_LIMIT_STEP = 5;
     connect(hotkey_registry.GetHotkey(main_window, QStringLiteral("Increase Speed Limit"), this),
             &QShortcut::activated, this, [&] {
                 if (Settings::values.frame_limit < 9999 - SPEED_LIMIT_STEP) {
@@ -721,16 +737,19 @@ void GMainWindow::InitializeHotkeys() {
                                     Settings::values.use_docked_mode);
                 dock_status_button->setChecked(Settings::values.use_docked_mode);
             });
+    connect(hotkey_registry.GetHotkey(main_window, QStringLiteral("Mute Audio"), this),
+            &QShortcut::activated, this,
+            [] { Settings::values.audio_muted = !Settings::values.audio_muted; });
 }
 
 void GMainWindow::SetDefaultUIGeometry() {
-    // geometry: 55% of the window contents are in the upper screen half, 45% in the lower half
+    // geometry: 53% of the window contents are in the upper screen half, 47% in the lower half
     const QRect screenRect = QApplication::desktop()->screenGeometry(this);
 
     const int w = screenRect.width() * 2 / 3;
-    const int h = screenRect.height() / 2;
+    const int h = screenRect.height() * 2 / 3;
     const int x = (screenRect.x() + screenRect.width()) / 2 - w / 2;
-    const int y = (screenRect.y() + screenRect.height()) / 2 - h * 55 / 100;
+    const int y = (screenRect.y() + screenRect.height()) / 2 - h * 53 / 100;
 
     setGeometry(x, y, w, h);
 }
@@ -821,6 +840,7 @@ void GMainWindow::ConnectMenuEvents() {
     connect(ui.action_Stop, &QAction::triggered, this, &GMainWindow::OnStopGame);
     connect(ui.action_Report_Compatibility, &QAction::triggered, this,
             &GMainWindow::OnMenuReportCompatibility);
+    connect(ui.action_Open_Mods_Page, &QAction::triggered, this, &GMainWindow::OnOpenModsPage);
     connect(ui.action_Restart, &QAction::triggered, this, [this] { BootGame(QString(game_path)); });
     connect(ui.action_Configure, &QAction::triggered, this, &GMainWindow::OnConfigure);
 
@@ -831,6 +851,7 @@ void GMainWindow::ConnectMenuEvents() {
             &GMainWindow::OnDisplayTitleBars);
     connect(ui.action_Show_Filter_Bar, &QAction::triggered, this, &GMainWindow::OnToggleFilterBar);
     connect(ui.action_Show_Status_Bar, &QAction::triggered, statusBar(), &QStatusBar::setVisible);
+    connect(ui.action_Reset_Window_Size, &QAction::triggered, this, &GMainWindow::ResetWindowSize);
 
     // Fullscreen
     ui.action_Fullscreen->setShortcut(
@@ -1026,7 +1047,6 @@ void GMainWindow::BootGame(const QString& filename) {
         mouse_hide_timer.start();
         setMouseTracking(true);
         ui.centralwidget->setMouseTracking(true);
-        ui.menubar->setMouseTracking(true);
     }
 
     const u64 title_id = Core::System::GetInstance().CurrentProcess()->GetTitleID();
@@ -1099,7 +1119,6 @@ void GMainWindow::ShutdownGame() {
 
     setMouseTracking(false);
     ui.centralwidget->setMouseTracking(false);
-    ui.menubar->setMouseTracking(false);
 
     UpdateWindowTitle();
 
@@ -1156,39 +1175,61 @@ void GMainWindow::OnGameListLoadFile(QString game_path) {
     BootGame(game_path);
 }
 
-void GMainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target) {
+void GMainWindow::OnGameListOpenFolder(GameListOpenTarget target, const std::string& game_path) {
     std::string path;
     QString open_target;
+
+    const auto v_file = Core::GetGameFileFromPath(vfs, game_path);
+    const auto loader = Loader::GetLoader(v_file);
+    FileSys::NACP control{};
+    u64 program_id{};
+
+    loader->ReadControlData(control);
+    loader->ReadProgramId(program_id);
+
+    const bool has_user_save{control.GetDefaultNormalSaveSize() > 0};
+    const bool has_device_save{control.GetDeviceSaveDataSize() > 0};
+
+    ASSERT_MSG(has_user_save != has_device_save, "Game uses both user and device savedata?");
+
     switch (target) {
     case GameListOpenTarget::SaveData: {
         open_target = tr("Save Data");
         const std::string nand_dir = FileUtil::GetUserPath(FileUtil::UserPath::NANDDir);
         ASSERT(program_id != 0);
 
-        const auto select_profile = [this] {
-            QtProfileSelectionDialog dialog(this);
-            dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
-                                  Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
-            dialog.setWindowModality(Qt::WindowModal);
+        if (has_user_save) {
+            // User save data
+            const auto select_profile = [this] {
+                QtProfileSelectionDialog dialog(this);
+                dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                                      Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
+                dialog.setWindowModality(Qt::WindowModal);
 
-            if (dialog.exec() == QDialog::Rejected) {
-                return -1;
+                if (dialog.exec() == QDialog::Rejected) {
+                    return -1;
+                }
+
+                return dialog.GetIndex();
+            };
+
+            const auto index = select_profile();
+            if (index == -1) {
+                return;
             }
 
-            return dialog.GetIndex();
-        };
-
-        const auto index = select_profile();
-        if (index == -1) {
-            return;
+            Service::Account::ProfileManager manager;
+            const auto user_id = manager.GetUser(static_cast<std::size_t>(index));
+            ASSERT(user_id);
+            path = nand_dir + FileSys::SaveDataFactory::GetFullPath(
+                                  FileSys::SaveDataSpaceId::NandUser,
+                                  FileSys::SaveDataType::SaveData, program_id, user_id->uuid, 0);
+        } else {
+            // Device save data
+            path = nand_dir + FileSys::SaveDataFactory::GetFullPath(
+                                  FileSys::SaveDataSpaceId::NandUser,
+                                  FileSys::SaveDataType::SaveData, program_id, {}, 0);
         }
-
-        Service::Account::ProfileManager manager;
-        const auto user_id = manager.GetUser(static_cast<std::size_t>(index));
-        ASSERT(user_id);
-        path = nand_dir + FileSys::SaveDataFactory::GetFullPath(FileSys::SaveDataSpaceId::NandUser,
-                                                                FileSys::SaveDataType::SaveData,
-                                                                program_id, user_id->uuid, 0);
 
         if (!FileUtil::Exists(path)) {
             FileUtil::CreateFullPath(path);
@@ -1771,6 +1812,16 @@ void GMainWindow::OnMenuReportCompatibility() {
     }
 }
 
+void GMainWindow::OnOpenModsPage() {
+    const auto mods_page_url = QStringLiteral("https://github.com/yuzu-emu/yuzu/wiki/Switch-Mods");
+    const QUrl mods_page(mods_page_url);
+    const bool open = QDesktopServices::openUrl(mods_page);
+    if (!open) {
+        QMessageBox::warning(this, tr("Error opening URL"),
+                             tr("Unable to open the URL \"%1\".").arg(mods_page_url));
+    }
+}
+
 void GMainWindow::ToggleFullscreen() {
     if (!emulation_running) {
         return;
@@ -1831,6 +1882,20 @@ void GMainWindow::ToggleWindowMode() {
     }
 }
 
+void GMainWindow::ResetWindowSize() {
+    const auto aspect_ratio = Layout::EmulationAspectRatio(
+        static_cast<Layout::AspectRatio>(Settings::values.aspect_ratio),
+        static_cast<float>(Layout::ScreenUndocked::Height) / Layout::ScreenUndocked::Width);
+    if (!ui.action_Single_Window_Mode->isChecked()) {
+        render_window->resize(Layout::ScreenUndocked::Height / aspect_ratio,
+                              Layout::ScreenUndocked::Height);
+    } else {
+        resize(Layout::ScreenUndocked::Height / aspect_ratio,
+               Layout::ScreenUndocked::Height + menuBar()->height() +
+                   (ui.action_Show_Status_Bar->isChecked() ? statusBar()->height() : 0));
+    }
+}
+
 void GMainWindow::OnConfigure() {
     const auto old_theme = UISettings::values.theme;
     const bool old_discord_presence = UISettings::values.enable_discord_presence;
@@ -1861,12 +1926,10 @@ void GMainWindow::OnConfigure() {
     if (UISettings::values.hide_mouse && emulation_running) {
         setMouseTracking(true);
         ui.centralwidget->setMouseTracking(true);
-        ui.menubar->setMouseTracking(true);
         mouse_hide_timer.start();
     } else {
         setMouseTracking(false);
         ui.centralwidget->setMouseTracking(false);
-        ui.menubar->setMouseTracking(false);
     }
 
     dock_status_button->setChecked(Settings::values.use_docked_mode);
