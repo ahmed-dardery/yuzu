@@ -35,7 +35,7 @@ MICROPROFILE_DEFINE(OpenGL_Texture_Buffer_Copy, "OpenGL", "Texture Buffer Copy",
 namespace {
 
 struct FormatTuple {
-    GLint internal_format;
+    GLenum internal_format;
     GLenum format = GL_NONE;
     GLenum type = GL_NONE;
 };
@@ -238,6 +238,12 @@ OGLTexture CreateTexture(const SurfaceParams& params, GLenum target, GLenum inte
     return texture;
 }
 
+constexpr u32 EncodeSwizzle(SwizzleSource x_source, SwizzleSource y_source, SwizzleSource z_source,
+                            SwizzleSource w_source) {
+    return (static_cast<u32>(x_source) << 24) | (static_cast<u32>(y_source) << 16) |
+           (static_cast<u32>(z_source) << 8) | static_cast<u32>(w_source);
+}
+
 } // Anonymous namespace
 
 CachedSurface::CachedSurface(const GPUVAddr gpu_addr, const SurfaceParams& params,
@@ -257,9 +263,14 @@ CachedSurface::CachedSurface(const GPUVAddr gpu_addr, const SurfaceParams& param
     target = GetTextureTarget(params.target);
     texture = CreateTexture(params, target, internal_format, texture_buffer);
     DecorateSurfaceName();
-    main_view = CreateViewInner(
-        ViewParams(params.target, 0, params.is_layered ? params.depth : 1, 0, params.num_levels),
-        true);
+
+    u32 num_layers = 1;
+    if (params.is_layered || params.target == SurfaceTarget::Texture3D) {
+        num_layers = params.depth;
+    }
+
+    main_view =
+        CreateViewInner(ViewParams(params.target, 0, num_layers, 0, params.num_levels), true);
 }
 
 CachedSurface::~CachedSurface() = default;
@@ -381,7 +392,7 @@ void CachedSurface::DecorateSurfaceName() {
 }
 
 void CachedSurfaceView::DecorateViewName(GPUVAddr gpu_addr, std::string prefix) {
-    LabelGLObject(GL_TEXTURE, texture_view.handle, gpu_addr, prefix);
+    LabelGLObject(GL_TEXTURE, main_view.handle, gpu_addr, prefix);
 }
 
 View CachedSurface::CreateView(const ViewParams& view_key) {
@@ -397,32 +408,33 @@ View CachedSurface::CreateViewInner(const ViewParams& view_key, const bool is_pr
 }
 
 CachedSurfaceView::CachedSurfaceView(CachedSurface& surface, const ViewParams& params,
-                                     const bool is_proxy)
-    : VideoCommon::ViewBase(params), surface{surface}, is_proxy{is_proxy} {
-    target = GetTextureTarget(params.target);
-    format = GetFormatTuple(surface.GetSurfaceParams().pixel_format).internal_format;
+                                     bool is_proxy)
+    : VideoCommon::ViewBase(params), surface{surface}, format{surface.internal_format},
+      target{GetTextureTarget(params.target)}, is_proxy{is_proxy} {
     if (!is_proxy) {
-        texture_view = CreateTextureView();
+        main_view = CreateTextureView();
     }
-    swizzle = EncodeSwizzle(SwizzleSource::R, SwizzleSource::G, SwizzleSource::B, SwizzleSource::A);
 }
 
 CachedSurfaceView::~CachedSurfaceView() = default;
 
-void CachedSurfaceView::Attach(GLenum attachment, GLenum target) const {
+void CachedSurfaceView::Attach(GLenum attachment, GLenum fb_target) const {
     ASSERT(params.num_levels == 1);
 
-    if (params.num_layers > 1) {
-        // Layered framebuffer attachments
-        UNIMPLEMENTED_IF(params.base_layer != 0);
-
-        switch (params.target) {
-        case SurfaceTarget::Texture2DArray:
-            glFramebufferTexture(target, attachment, GetTexture(), 0);
-            break;
-        default:
-            UNIMPLEMENTED();
+    if (params.target == SurfaceTarget::Texture3D) {
+        if (params.num_layers > 1) {
+            ASSERT(params.base_layer == 0);
+            glFramebufferTexture(fb_target, attachment, surface.texture.handle, params.base_level);
+        } else {
+            glFramebufferTexture3D(fb_target, attachment, target, surface.texture.handle,
+                                   params.base_level, params.base_layer);
         }
+        return;
+    }
+
+    if (params.num_layers > 1) {
+        UNIMPLEMENTED_IF(params.base_layer != 0);
+        glFramebufferTexture(fb_target, attachment, GetTexture(), 0);
         return;
     }
 
@@ -430,16 +442,16 @@ void CachedSurfaceView::Attach(GLenum attachment, GLenum target) const {
     const GLuint texture = surface.GetTexture();
     switch (surface.GetSurfaceParams().target) {
     case SurfaceTarget::Texture1D:
-        glFramebufferTexture1D(target, attachment, view_target, texture, params.base_level);
+        glFramebufferTexture1D(fb_target, attachment, view_target, texture, params.base_level);
         break;
     case SurfaceTarget::Texture2D:
-        glFramebufferTexture2D(target, attachment, view_target, texture, params.base_level);
+        glFramebufferTexture2D(fb_target, attachment, view_target, texture, params.base_level);
         break;
     case SurfaceTarget::Texture1DArray:
     case SurfaceTarget::Texture2DArray:
     case SurfaceTarget::TextureCubemap:
     case SurfaceTarget::TextureCubeArray:
-        glFramebufferTextureLayer(target, attachment, texture, params.base_level,
+        glFramebufferTextureLayer(fb_target, attachment, texture, params.base_level,
                                   params.base_layer);
         break;
     default:
@@ -447,35 +459,62 @@ void CachedSurfaceView::Attach(GLenum attachment, GLenum target) const {
     }
 }
 
-void CachedSurfaceView::ApplySwizzle(SwizzleSource x_source, SwizzleSource y_source,
+GLuint CachedSurfaceView::GetTexture(SwizzleSource x_source, SwizzleSource y_source,
                                      SwizzleSource z_source, SwizzleSource w_source) {
-    u32 new_swizzle = EncodeSwizzle(x_source, y_source, z_source, w_source);
-    if (new_swizzle == swizzle)
-        return;
-    swizzle = new_swizzle;
-    const std::array gl_swizzle = {GetSwizzleSource(x_source), GetSwizzleSource(y_source),
-                                   GetSwizzleSource(z_source), GetSwizzleSource(w_source)};
-    const GLuint handle = GetTexture();
-    const PixelFormat format = surface.GetSurfaceParams().pixel_format;
-    switch (format) {
+    if (GetSurfaceParams().IsBuffer()) {
+        return GetTexture();
+    }
+    const u32 new_swizzle = EncodeSwizzle(x_source, y_source, z_source, w_source);
+    if (current_swizzle == new_swizzle) {
+        return current_view;
+    }
+    current_swizzle = new_swizzle;
+
+    const auto [entry, is_cache_miss] = view_cache.try_emplace(new_swizzle);
+    OGLTextureView& view = entry->second;
+    if (!is_cache_miss) {
+        current_view = view.handle;
+        return view.handle;
+    }
+    view = CreateTextureView();
+    current_view = view.handle;
+
+    std::array swizzle{x_source, y_source, z_source, w_source};
+
+    switch (const PixelFormat format = GetSurfaceParams().pixel_format) {
     case PixelFormat::Z24S8:
     case PixelFormat::Z32FS8:
     case PixelFormat::S8Z24:
-        glTextureParameteri(handle, GL_DEPTH_STENCIL_TEXTURE_MODE,
+        UNIMPLEMENTED_IF(x_source != SwizzleSource::R && x_source != SwizzleSource::G);
+        glTextureParameteri(view.handle, GL_DEPTH_STENCIL_TEXTURE_MODE,
                             GetComponent(format, x_source == SwizzleSource::R));
-        break;
-    default:
-        glTextureParameteriv(handle, GL_TEXTURE_SWIZZLE_RGBA, gl_swizzle.data());
+
+        // Make sure we sample the first component
+        std::transform(swizzle.begin(), swizzle.end(), swizzle.begin(), [](SwizzleSource value) {
+            return value == SwizzleSource::G ? SwizzleSource::R : value;
+        });
+        [[fallthrough]];
+    default: {
+        const std::array gl_swizzle = {GetSwizzleSource(swizzle[0]), GetSwizzleSource(swizzle[1]),
+                                       GetSwizzleSource(swizzle[2]), GetSwizzleSource(swizzle[3])};
+        glTextureParameteriv(view.handle, GL_TEXTURE_SWIZZLE_RGBA, gl_swizzle.data());
         break;
     }
+    }
+    return view.handle;
 }
 
 OGLTextureView CachedSurfaceView::CreateTextureView() const {
     OGLTextureView texture_view;
     texture_view.Create();
 
-    glTextureView(texture_view.handle, target, surface.texture.handle, format, params.base_level,
-                  params.num_levels, params.base_layer, params.num_layers);
+    if (target == GL_TEXTURE_3D) {
+        glTextureView(texture_view.handle, target, surface.texture.handle, format,
+                      params.base_level, params.num_levels, 0, 1);
+    } else {
+        glTextureView(texture_view.handle, target, surface.texture.handle, format,
+                      params.base_level, params.num_levels, params.base_layer, params.num_layers);
+    }
     ApplyTextureDefaults(surface.GetSurfaceParams(), texture_view.handle);
 
     return texture_view;
@@ -518,8 +557,8 @@ void TextureCacheOpenGL::ImageBlit(View& src_view, View& dst_view,
                                    const Tegra::Engines::Fermi2D::Config& copy_config) {
     const auto& src_params{src_view->GetSurfaceParams()};
     const auto& dst_params{dst_view->GetSurfaceParams()};
-    UNIMPLEMENTED_IF(src_params.target == SurfaceTarget::Texture3D);
-    UNIMPLEMENTED_IF(dst_params.target == SurfaceTarget::Texture3D);
+    UNIMPLEMENTED_IF(src_params.depth != 1);
+    UNIMPLEMENTED_IF(dst_params.depth != 1);
 
     state_tracker.NotifyScissor0();
     state_tracker.NotifyFramebuffer();
